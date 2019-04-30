@@ -1,0 +1,31 @@
+﻿  Source.c
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(11): warning C4005: '_CRT_SECURE_NO_WARNINGS': macro redefinition
+  c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c: note: see previous definition of '_CRT_SECURE_NO_WARNINGS'
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(63): warning C4018: '>': signed/unsigned mismatch
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(64): warning C4474: 'printf' : too many arguments passed for format string
+  c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(64): note: placeholders and their parameters expect 2 variadic arguments, but 3 were provided
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(99): warning C4047: 'function': 'Pixel *' differs in levels of indirection from 'Pixel **'
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(99): warning C4024: 'pad_array': different types for formal and actual parameter 3
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(109): warning C4244: '=': conversion from 'double' to 'clock_t', possible loss of data
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(115): warning C4047: 'function': 'Pixel *' differs in levels of indirection from 'Pixel **'
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(115): warning C4024: 'pad_array': different types for formal and actual parameter 3
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(118): warning C4244: '=': conversion from 'double' to 'clock_t', possible loss of data
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(136): warning C4047: 'function': 'Pixel *' differs in levels of indirection from 'Pixel **'
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(136): warning C4024: 'pad_array': different types for formal and actual parameter 3
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(143): warning C4244: '=': conversion from 'double' to 'clock_t', possible loss of data
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(147): warning C4047: 'function': 'Pixel *' differs in levels of indirection from 'Pixel **'
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(147): warning C4024: 'pad_array': different types for formal and actual parameter 3
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(150): warning C4244: '=': conversion from 'double' to 'clock_t', possible loss of data
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(201): warning C4018: '<': signed/unsigned mismatch
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(333): warning C4244: '=': conversion from 'double' to 'float', possible loss of data
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(334): warning C4244: '=': conversion from 'double' to 'float', possible loss of data
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(335): warning C4244: 'initializing': conversion from 'float' to 'int', possible loss of data
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(336): warning C4244: 'initializing': conversion from 'float' to 'int', possible loss of data
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(451): warning C4018: '<=': signed/unsigned mismatch
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(454): warning C4018: '<=': signed/unsigned mismatch
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(472): warning C4018: '<': signed/unsigned mismatch
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(473): warning C4018: '<': signed/unsigned mismatch
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(482): warning C4018: '<': signed/unsigned mismatch
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(483): warning C4018: '<': signed/unsigned mismatch
+c:\users\nibbinz\documents\paracomp\assignment_temp\assignment_temp\source.c(491): warning C4018: '<': signed/unsigned mismatch
+  Assignment_temp.vcxproj -> C:\Users\Nibbinz\Documents\paracomp\Assignment_temp\Debug\Assignment_temp.exe

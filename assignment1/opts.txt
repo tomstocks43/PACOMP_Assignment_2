@@ -1,0 +1,2 @@
+4 CPU -i Dog2048x2048.ppm -o output.ppm -f PPM_Binary
+4 CPU -i DogPlainText2048x2048.ppm -o output.ppm -f PPM_Plain_Text

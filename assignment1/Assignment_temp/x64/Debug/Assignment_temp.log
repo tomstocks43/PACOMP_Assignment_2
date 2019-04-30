@@ -1,0 +1,17 @@
+﻿  Source.c
+u:\manwin\my documents\parallelcompute\assignment1\assignment_temp\source.c(11): warning C4005: '_CRT_SECURE_NO_WARNINGS': macro redefinition
+  u:\manwin\my documents\parallelcompute\assignment1\assignment_temp\source.c(11): note: command-line arguments:  see previous definition of '_CRT_SECURE_NO_WARNINGS'
+u:\manwin\my documents\parallelcompute\assignment1\assignment_temp\source.c(319): warning C4477: 'fscanf' : format string '%d' requires an argument of type 'int *', but variadic argument 1 has type 'unsigned char *'
+  u:\manwin\my documents\parallelcompute\assignment1\assignment_temp\source.c(319): note: consider using '%hhd' in the format string
+u:\manwin\my documents\parallelcompute\assignment1\assignment_temp\source.c(319): warning C4477: 'fscanf' : format string '%d' requires an argument of type 'int *', but variadic argument 2 has type 'unsigned char *'
+  u:\manwin\my documents\parallelcompute\assignment1\assignment_temp\source.c(319): note: consider using '%hhd' in the format string
+u:\manwin\my documents\parallelcompute\assignment1\assignment_temp\source.c(319): warning C4477: 'fscanf' : format string '%d' requires an argument of type 'int *', but variadic argument 3 has type 'unsigned char *'
+  u:\manwin\my documents\parallelcompute\assignment1\assignment_temp\source.c(319): note: consider using '%hhd' in the format string
+u:\manwin\my documents\parallelcompute\assignment1\assignment_temp\source.c(478): warning C4018: '<': signed/unsigned mismatch
+u:\manwin\my documents\parallelcompute\assignment1\assignment_temp\source.c(479): warning C4018: '<': signed/unsigned mismatch
+u:\manwin\my documents\parallelcompute\assignment1\assignment_temp\source.c(492): warning C4018: '<': signed/unsigned mismatch
+u:\manwin\my documents\parallelcompute\assignment1\assignment_temp\source.c(493): warning C4018: '<': signed/unsigned mismatch
+u:\manwin\my documents\parallelcompute\assignment1\assignment_temp\source.c(501): warning C4018: '<': signed/unsigned mismatch
+u:\manwin\my documents\parallelcompute\assignment1\assignment_temp\source.c(547): warning C4018: '<': signed/unsigned mismatch
+u:\manwin\my documents\parallelcompute\assignment1\assignment_temp\source.c(549): warning C4018: '<': signed/unsigned mismatch
+  Assignment_temp.vcxproj -> U:\ManWin\My Documents\PARALLELCOMPUTE\assignment1\x64\Debug\Assignment_1.exe
