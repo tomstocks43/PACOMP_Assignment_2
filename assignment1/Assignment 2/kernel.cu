@@ -15,12 +15,16 @@
 
 
 typedef struct {
-	int r, g, b;
+	unsigned char r, g, b;
 } Pixel;
 
 typedef struct {
+	int r, g, b;
+} Pixel2;
+
+typedef struct {
 	unsigned int height, width, magic, max_val;
-	Pixel *data;
+	Pixel2 *data;
 } Image;
 typedef struct {
 	int start, stop;
@@ -31,13 +35,13 @@ void print_help();
 int process_command_line(int argc, char *argv[]);
 static Image *import_ppm_hdr(char *imagein, char *binmode);
 int powerof2(unsigned int c);
-static Image *pad_array(Image *im, unsigned int c, Pixel *glob_av);
+static Image *pad_array(Image *im, unsigned int c, Pixel2 *glob_av);
 static Image *seq_mosaic_filter(Image *im, unsigned int c);
 void output_ppm(char *filename, Image *im);
 static Image *omp_mosaic_filter(Image *im, unsigned int c);
-static Pixel *seq_print_av_col(Image *im);
-static Pixel *omp_print_av_col(Image *im);
-static Pixel *cuda_print_av_col(Image *im);
+static Pixel2 *seq_print_av_col(Image *im);
+static Pixel2 *omp_print_av_col(Image *im);
+static Pixel2 *cuda_print_av_col(Image *im);
 
 unsigned int c = 0;
 MODE execution_mode = CPU;
@@ -93,8 +97,8 @@ int main(int argc, char *argv[]) {
 		//TODO: starting timing here
 		clock_t start, stop;
 		start = clock();
-		Pixel *glob_av;
-		glob_av = (Pixel*)malloc(sizeof(Pixel));
+		Pixel2 *glob_av;
+		glob_av = (Pixel2*)malloc(sizeof(Pixel2));
 		glob_av = seq_print_av_col(im_in);
 		//Start the mosaic filter
 		im_in = pad_array(im_in, c, glob_av);
@@ -109,8 +113,8 @@ int main(int argc, char *argv[]) {
 		clock_t start, stop;
 		start = clock();
 		//TODO: calculate the average colour value
-		Pixel *glob_av;
-		glob_av = (Pixel*)malloc(sizeof(Pixel));
+		Pixel2 *glob_av;
+		glob_av = (Pixel2*)malloc(sizeof(Pixel2));
 		glob_av = omp_print_av_col(im_in);
 		// Output the average colour value for the image
 		im_in = pad_array(im_in, c, glob_av);
@@ -130,8 +134,8 @@ int main(int argc, char *argv[]) {
 
 		clock_t start, stop;
 		start = clock();
-		Pixel *glob_av;
-		glob_av = (Pixel*)malloc(sizeof(Pixel));
+		Pixel2 *glob_av;
+		glob_av = (Pixel2*)malloc(sizeof(Pixel2));
 		glob_av = seq_print_av_col(im_in);
 		//Start the mosaic filter
 		im_in = pad_array(im_in, c, glob_av);
@@ -254,14 +258,14 @@ static Image *import_ppm_hdr(char *imagein, char *binmode) {
 	int width, height, max_val;
 	int i = 0;
 
-	if (strcmp(binmode, "PPM_Binary") == 0) {
+	if (strcmp(binmode, "PPM_BINARY") == 0) {
 		file_point = fopen(imagein, "rb");
 		if (file_point == NULL) {
 			printf("Could not open file %s", imagein);
 			exit(4);
 		}
 	}
-	else if (strcmp(binmode, "PPM_Plain_Text") == 0) {
+	else if (strcmp(binmode, "PPM_PLAIN_TEXT") == 0) {
 		file_point = fopen(imagein, "r");
 		if (file_point == NULL) {
 			printf("Could not open file %s", imagein);
@@ -315,7 +319,10 @@ static Image *import_ppm_hdr(char *imagein, char *binmode) {
 
 								  //while (fgetc(file_point) != '\n');
 
-	im->data = (Pixel*)malloc(width * height * sizeof(Pixel)); //memory needed for image = number of elements * memory size of 1 pixel
+	Pixel* data;
+	data = (Pixel*)malloc(width * height * sizeof(Pixel)); //memory needed for image = number of elements * memory size of 1 pixel
+	Pixel2* data_int;
+	data_int = (Pixel2*)malloc(width * height * sizeof(Pixel2));
 
 	if (!im) { // check if mem allocation fails
 		printf("Unable to allocate memory for image data \n");
@@ -323,25 +330,36 @@ static Image *import_ppm_hdr(char *imagein, char *binmode) {
 	}
 
 	//read pixel data from file
-	if (strcmp(binmode, "PPM_Binary") == 0) {
-		size_t test = fread(im->data, sizeof(char), width*height, file_point);
-		//printf('%zu', test);
-		if (fread(im->data, sizeof(Pixel), width*height, file_point) != width*height) { // reads into img data, the number of elements to be read is 3 (rgb) * number of x elements because each element in the array is a y row. Thus third arg is the size of a y row.
+	if (strcmp(binmode, "PPM_BINARY") == 0) {
+		if (fread(data, sizeof(Pixel), width*height, file_point) != width * height) { // reads into img data, the number of elements to be read is 3 (rgb) * number of x elements because each element in the array is a y row. Thus third arg is the size of a y row.
 			fprintf(stderr, "Error loading image '%s'\n", imagein);
 			exit(8);
 		}
 	}
 
-
-	else if (strcmp(binmode, "PPM_Plain_Text") == 0) {
+	else if (strcmp(binmode, "PPM_PLAIN_TEXT") == 0) {
 		for (i = 0; i < width * height; i++) {
 			fscanf(file_point, "%c %c %c", &im->data[i].r, &im->data[i].g, &im->data[i].b);
 		}
 	}
+	for (i = 0; i < width*height; i++) {
+		Pixel tempr = data[i];
+	}
+
+	int numel = width*height;
+
+	for (i = 0; i < numel; i++) {
+		data_int[i].r = data[i].r;
+		data_int[i].g = data[i].g;
+		data_int[i].b = data[i].b;
+		int tempb = data[i].b, tempb2 = data_int[i].b;
+	}
+
 	im->magic = magic[1] - '0';
 	im->height = height;
 	im->width = width;
 	im->max_val = max_val;
+	im->data = data_int;
 
 	fclose(file_point);
 	return im;
@@ -354,7 +372,7 @@ int powerof2(unsigned int c)
 	return (c == 1);
 }
 
-static Image *pad_array(Image *im, unsigned int c, Pixel *glob_av) {
+static Image *pad_array(Image *im, unsigned int c, Pixel2 *glob_av) {
 
 	unsigned int rows_required, cols_required;
 	rows_required = (unsigned int)ceil((double)im->height / c);
@@ -365,8 +383,8 @@ static Image *pad_array(Image *im, unsigned int c, Pixel *glob_av) {
 	int pad_height = (int)ceil((float)(windows_height - im->height) / 2);
 
 	if (pad_height != 0 || pad_sides != 0) {
-		Pixel* padded;
-		padded = (Pixel*)malloc(windows_width * windows_height * sizeof(Pixel));
+		Pixel2* padded;
+		padded = (Pixel2*)malloc(windows_width * windows_height * sizeof(Pixel2));
 		unsigned int i, j;
 		for (i = 0; i < windows_width * windows_height; i++) {
 			padded[i] = *glob_av;
@@ -410,8 +428,8 @@ static Image *seq_mosaic_filter(Image *im, unsigned int c) {
 
 	int col_idx, row_idx, im_idx, relative_index, write_idx;
 	double local_r = 0, local_g = 0, local_b = 0, c_dub = (double)c;
-	Pixel *local_av;
-	local_av = (Pixel*)malloc(sizeof(Pixel));
+	Pixel2 *local_av;
+	local_av = (Pixel2*)malloc(sizeof(Pixel2));
 	local_av->r = 0; local_av->g = 0; local_av->b = 0;
 
 	for (i = 0; i < cols_required; i++) {
@@ -425,18 +443,18 @@ static Image *seq_mosaic_filter(Image *im, unsigned int c) {
 				for (l = 0; l < c; l++) {
 					relative_index = (k*im->width) + l;
 					window_idxs[k*c + l] = im_idx + relative_index;
-					local_r = local_r + (double)im->data[im_idx + (k * im->width) + l].r ;
-					local_g = local_g + (double)im->data[im_idx + (k * im->width) + l].g ;
-					local_b = local_b + (double)im->data[im_idx + (k * im->width) + l].b ;
+					local_r = local_r + (double)im->data[im_idx + (k * im->width) + l].r;
+					local_g = local_g + (double)im->data[im_idx + (k * im->width) + l].g;
+					local_b = local_b + (double)im->data[im_idx + (k * im->width) + l].b;
 				}
 			}
 			local_r = local_r / (c_dub*c_dub);
 			local_g = local_g / (c_dub*c_dub);
 			local_b = local_b / (c_dub*c_dub);
 
-			local_av->r = (char)round(local_r);
-			local_av->g = (char)round(local_g);
-			local_av->b = (char)round(local_b);
+			local_av->r = round(local_r);
+			local_av->g = round(local_g);
+			local_av->b = round(local_b);
 			local_r = 0, local_g = 0, local_b = 0;
 			for (k = 0; k < c*c; k++) { // iterate through the indexes we stored when we were calculating the window average and assign averge values into the image.
 				write_idx = window_idxs[k];
@@ -507,7 +525,7 @@ static Image *omp_mosaic_filter(Image *im, unsigned int c) {
 #pragma omp parallel for 
 		for (i = 0; i < cols_required; i++) {
 			for (j = 0; j < rows_required; j++) {
-				Pixel local_av;
+				Pixel2 local_av;
 				unsigned int k = 0, l = 0;
 
 				int col_idx, row_idx, im_idx, relative_index, write_idx;
@@ -523,9 +541,9 @@ static Image *omp_mosaic_filter(Image *im, unsigned int c) {
 					for (l = 0; l < c; l++) {
 						relative_index = (k*im->width) + l;
 						window_idxs[k*c + l] = im_idx + relative_index;
-						local_r = local_r + (double)im->data[im_idx + relative_index].r ;
-						local_g = local_g + (double)im->data[im_idx + relative_index].g ;
-						local_b = local_b + (double)im->data[im_idx + relative_index].b ;
+						local_r = local_r + (double)im->data[im_idx + relative_index].r;
+						local_g = local_g + (double)im->data[im_idx + relative_index].g;
+						local_b = local_b + (double)im->data[im_idx + relative_index].b;
 					}
 				}
 				local_r = local_r / (c_2);
@@ -548,7 +566,7 @@ static Image *omp_mosaic_filter(Image *im, unsigned int c) {
 	return(im);
 }
 
-static Pixel *seq_print_av_col(Image *im) {
+static Pixel2 *seq_print_av_col(Image *im) {
 	unsigned int i, j;
 
 	//TODO: calculate the average colour value
@@ -567,19 +585,19 @@ static Pixel *seq_print_av_col(Image *im) {
 	gglob_av = gglob_av / n;
 	bglob_av = bglob_av / n;
 	// Output the average colour value for the image
-	Pixel *glob_av;
-	glob_av = (Pixel*)malloc(sizeof(Pixel));
-	glob_av->r = (char)rglob_av;
-	glob_av->g = (char)gglob_av;
-	glob_av->b = (char)bglob_av;
+	Pixel2 *glob_av;
+	glob_av = (Pixel2*)malloc(sizeof(Pixel2));
+	glob_av->r = rglob_av;
+	glob_av->g = gglob_av;
+	glob_av->b = bglob_av;
 	printf("CPU Average image colour red = %d, green = %d, blue = %d \n", glob_av->r, glob_av->g, glob_av->b);
 	return glob_av;
 }
 
-static Pixel *omp_print_av_col(Image *im) {
+static Pixel2 *omp_print_av_col(Image *im) {
 
 	double rglob_av = 0, bglob_av = 0, gglob_av = 0, n = (double)im->height * im->width;
-	
+
 	int i, j, idx;
 
 #pragma omp parallel for
@@ -610,19 +628,16 @@ static Pixel *omp_print_av_col(Image *im) {
 	gglob_av = gglob_av / n;
 	bglob_av = bglob_av / n;
 
-	Pixel *glob_av;
-	glob_av = (Pixel*)malloc(sizeof(Pixel));
-	glob_av->r = (char)round(rglob_av);
-	glob_av->g = (char)round(gglob_av);
-	glob_av->b = (char)round(bglob_av);
+	Pixel2 *glob_av;
+	glob_av = (Pixel2*)malloc(sizeof(Pixel2));
+	glob_av->r = round(rglob_av);
+	glob_av->g = round(gglob_av);
+	glob_av->b = round(bglob_av);
 	printf("OMP Average image colour red = %d, green = %d, blue = %d \n", glob_av->r, glob_av->g, glob_av->b);
 	return glob_av;
 }
 
-__global__ void cuda_av_kern(Image *im, Pixel *av, int numel) {
-
-	dim3 dimBlock = dim3(16, 16, 1);
-	dim3 dimGrid = dim3(im->width / 16, im->height / 16);
+__global__ void cuda_av_kern(Image *im, Pixel2 *av, int *d_numel) {
 
 	int x = threadIdx.x + blockIdx.x * blockDim.x;
 	int y = threadIdx.y + blockIdx.y * blockDim.y;
@@ -631,40 +646,49 @@ __global__ void cuda_av_kern(Image *im, Pixel *av, int numel) {
 
 	int idx = x + y * im->width;
 
-	if (numel > idx) {
+	if (*d_numel > idx) {
 
 		tempr = im->data[idx].r;
 		tempg = im->data[idx].g;
 		tempb = im->data[idx].b;
 
-		//int atomicAdd(av->r, int (int)tempr);
+		int *r;
+		r = &av->r;
 
+		int test = atomicAdd(r , 10);
+		printf("from pixel %d %d, the value being added is %d %d %d", x, y, tempr, tempg, tempb);
 	}
 
 }
 
-static Pixel *cuda_print_av_col(Image *im) {
-	Pixel *h_av;
-	Pixel *av;
+static Pixel2 *cuda_print_av_col(Image *im) {
+	Pixel2 *h_av;
+	Pixel2 *av;
 	Image *d_im;
 
 
-	unsigned int numel = sizeof(im->data) / sizeof(im->data[0]); // Number of elements in image, so we dont exceed image bounds
+	int numel = im->width * im->height; // Number of elements in image, so we dont exceed image bounds
+	int *d_numel = &numel;
+	cudaMalloc(&d_numel, sizeof(int));
 
-	cudaMalloc((void **)&av, sizeof(Pixel)); // allocate memory on device for average pixel
-	cudaMemset( av, 0, sizeof(Pixel)); // set av vals to 0 (initialising)
+	cudaMallocManaged((void**)&av, sizeof(Pixel2)); // allocate memory on device for average pixel
+	cudaMemset(av, 0, sizeof(Pixel2)); // set av vals to 0 (initialising)
 
-	h_av = (Pixel*)malloc(sizeof(Pixel)); // declare host version of average pixel
+	h_av = (Pixel2*)malloc(sizeof(Pixel2)); // declare host version of average pixel
 
-	cudaMalloc((void **)&d_im, sizeof(Image)); // allocate space for image on device
+	cudaMalloc((void**)&d_im, sizeof(Image)); // allocate space for image on device
 	cudaMemset(d_im, 0, sizeof(Image)); // set image values to 0
-
-	unsigned int THREADS_PER_BLOCK = 32; // defne kernel params
-	unsigned int BLOCKS = numel / THREADS_PER_BLOCK;
-
 	cudaMemcpy(im, d_im, sizeof(im), cudaMemcpyHostToDevice);
 
-	cuda_av_kern << <BLOCKS, THREADS_PER_BLOCK >> > (d_im, av, numel);
+	unsigned int THREADS_PER_BLOCK = 32; // defne kernel params
+	
+	unsigned int BLOCKS = numel / THREADS_PER_BLOCK;
+
+	dim3 threadsPerBlock(32 , 1 , 1 );
+	int N = numel / threadsPerBlock.x;
+	dim3 blocksPerGrid(N, 1, 1);
+
+	cuda_av_kern << <blocksPerGrid, threadsPerBlock >> > (d_im, av, d_numel);
 
 	cudaMemcpy(h_av, av, sizeof(Pixel), cudaMemcpyDeviceToHost); // bring average back to host
 
