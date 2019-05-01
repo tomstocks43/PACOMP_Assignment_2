@@ -15,8 +15,9 @@
 
 
 typedef struct {
-	unsigned char r, g, b;
+	int r, g, b;
 } Pixel;
+
 typedef struct {
 	unsigned int height, width, magic, max_val;
 	Pixel *data;
@@ -88,7 +89,6 @@ int main(int argc, char *argv[]) {
 	}
 	switch (execution_mode) {
 	case (CPU): {
-		int i = 0, j = 0;
 
 		//TODO: starting timing here
 		clock_t start, stop;
@@ -318,14 +318,15 @@ static Image *import_ppm_hdr(char *imagein, char *binmode) {
 	im->data = (Pixel*)malloc(width * height * sizeof(Pixel)); //memory needed for image = number of elements * memory size of 1 pixel
 
 	if (!im) { // check if mem allocation fails
-		printf("test");
 		printf("Unable to allocate memory for image data \n");
 		exit(7);
 	}
 
 	//read pixel data from file
 	if (strcmp(binmode, "PPM_Binary") == 0) {
-		if (fread(im->data, 3 * height, width, file_point) != width) { // reads into img data, the number of elements to be read is 3 (rgb) * number of x elements because each element in the array is a y row. Thus third arg is the size of a y row.
+		size_t test = fread(im->data, sizeof(char), width*height, file_point);
+		//printf('%zu', test);
+		if (fread(im->data, sizeof(Pixel), width*height, file_point) != width*height) { // reads into img data, the number of elements to be read is 3 (rgb) * number of x elements because each element in the array is a y row. Thus third arg is the size of a y row.
 			fprintf(stderr, "Error loading image '%s'\n", imagein);
 			exit(8);
 		}
@@ -479,13 +480,13 @@ void output_ppm(char *filename, Image *im) {
 
 static Image *omp_mosaic_filter(Image *im, unsigned int c) {
 	// need to find indices of where mosiac windows will be applied so we can iterate
-	unsigned int rows_required, cols_required;
+	int rows_required, cols_required;
 	rows_required = im->height / c;
 	cols_required = im->width / c;
 	int *height_idxs, *width_idxs;
 	height_idxs = (int*)malloc(rows_required * sizeof(int));
 	width_idxs = (int*)malloc(cols_required * sizeof(int));
-	unsigned int n;
+	int n;
 	double local_r = 0, local_g = 0, local_b = 0, c_2 = (double)c*c;
 
 
@@ -531,9 +532,9 @@ static Image *omp_mosaic_filter(Image *im, unsigned int c) {
 				local_g = local_g / (c_2);
 				local_b = local_b / (c_2);
 
-				local_av.r = local_r;
-				local_av.g = local_g;
-				local_av.b = local_b;
+				local_av.r = (char)local_r;
+				local_av.g = (char)local_g;
+				local_av.b = (char)local_b;
 				local_r = 0, local_g = 0, local_b = 0;
 
 				for (k = 0; k < c*c; k++) { // iterate through the indexes we stored when we were calculating the window average and assign averge values into the image.
@@ -620,38 +621,52 @@ static Pixel *omp_print_av_col(Image *im) {
 
 __global__ void cuda_av_kern(Image *im, Pixel *av, int numel) {
 
-	dim3 dimBlock = dim3(THREADS, THREADS, 1);
-	dim3 dimGrid = dim3(im->width / THREADS, im->height / THREADS);
+	dim3 dimBlock = dim3(16, 16, 1);
+	dim3 dimGrid = dim3(im->width / 16, im->height / 16);
+
 	int x = threadIdx.x + blockIdx.x * blockDim.x;
 	int y = threadIdx.y + blockIdx.y * blockDim.y;
 
+	int tempr, tempg, tempb;
+
 	int idx = x + y * im->width;
+
 	if (numel > idx) {
-		av->r = av->r + im->data[idx].r;
-		av->g = av->g + im->data[idx].g;
-		av->b = av->b + im->data[idx].b;
+
+		tempr = im->data[idx].r;
+		tempg = im->data[idx].g;
+		tempb = im->data[idx].b;
+
+		//int atomicAdd(av->r, int (int)tempr);
+
 	}
-	
 
 }
 
 static Pixel *cuda_print_av_col(Image *im) {
 	Pixel *h_av;
 	Pixel *av;
-	unsigned int numel = sizeof(im->data) / sizeof(im->data[0]);
-	int size = sizeof(Pixel);
-	cudaMalloc((void **)&av, size);
+	Image *d_im;
 
-	cudaMemset( av, 0, sizeof(Pixel));
 
-	h_av = (Pixel*)malloc(sizeof(Pixel));
+	unsigned int numel = sizeof(im->data) / sizeof(im->data[0]); // Number of elements in image, so we dont exceed image bounds
 
-	unsigned int THREADS_PER_BLOCK = 32;
+	cudaMalloc((void **)&av, sizeof(Pixel)); // allocate memory on device for average pixel
+	cudaMemset( av, 0, sizeof(Pixel)); // set av vals to 0 (initialising)
+
+	h_av = (Pixel*)malloc(sizeof(Pixel)); // declare host version of average pixel
+
+	cudaMalloc((void **)&d_im, sizeof(Image)); // allocate space for image on device
+	cudaMemset(d_im, 0, sizeof(Image)); // set image values to 0
+
+	unsigned int THREADS_PER_BLOCK = 32; // defne kernel params
 	unsigned int BLOCKS = numel / THREADS_PER_BLOCK;
 
-	cuda_av_kern << <BLOCKS, THREADS_PER_BLOCK >> >(im, av, numel);
+	cudaMemcpy(im, d_im, sizeof(im), cudaMemcpyHostToDevice);
 
-	cudaMemcpy(h_av, av, size, cudaMemcpyDeviceToHost);
+	cuda_av_kern << <BLOCKS, THREADS_PER_BLOCK >> > (d_im, av, numel);
+
+	cudaMemcpy(h_av, av, sizeof(Pixel), cudaMemcpyDeviceToHost); // bring average back to host
 
 	printf("CUDA Average image colour red = %d, green = %d, blue = %d \n", h_av->r, h_av->g, h_av->b);
 
