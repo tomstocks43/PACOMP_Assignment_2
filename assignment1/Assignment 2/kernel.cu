@@ -12,7 +12,8 @@
 #define HEADCHAR 24
 #define USER_NAME "acp18ts"		//replace with your user name
 #define THREADS 16
-
+#define CUDA_CALL(x) {cudaError_t cuda_error__ = (x); if (cuda_error__) printf("CUDA error: " #x " returned \"%s\"\n", cudaGetErrorString(cuda_error__));}
+#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 
 typedef struct {
 	unsigned char r, g, b;
@@ -42,6 +43,16 @@ static Image *omp_mosaic_filter(Image *im, unsigned int c);
 static Pixel2 *seq_print_av_col(Image *im);
 static Pixel2 *omp_print_av_col(Image *im);
 static Pixel2 *cuda_print_av_col(Image *im);
+
+
+inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
+{
+	if (code != cudaSuccess)
+	{
+		fprintf(stderr, "GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+		if (abort) exit(code);
+	}
+}
 
 unsigned int c = 0;
 MODE execution_mode = CPU;
@@ -639,24 +650,26 @@ static Pixel2 *omp_print_av_col(Image *im) {
 
 __global__ void cuda_av_kern(Image *im, Pixel2 *av, int *d_numel) {
 
-	int x = threadIdx.x + blockIdx.x * blockDim.x;
-	int y = threadIdx.y + blockIdx.y * blockDim.y;
+	//int idx = threadIdx.x + blockIdx.x * blockDim.x;
+	int idx = 0;
+	int tempr = 0, tempg = 0 , tempb = 0;
 
-	int tempr, tempg, tempb;
+	printf("thread idx is %d", idx);
 
-	int idx = x + y * im->width;
-
-	if (*d_numel > idx) {
-
+	if (idx == idx) {
 		tempr = im->data[idx].r;
 		tempg = im->data[idx].g;
 		tempb = im->data[idx].b;
 
-		int *r;
+		/*int *r, *g, *b;
 		r = &av->r;
+		g = &av->g;
+		b = &av->b;
 
-		int test = atomicAdd(r , 10);
-		printf("from pixel %d %d, the value being added is %d %d %d", x, y, tempr, tempg, tempb);
+		tempr = atomicAdd(r, tempr);
+		tempg = atomicAdd(g, tempg);
+		tempb = atomicAdd(b, tempb);*/
+		printf("the value being added is %d %d %d \n", tempr, tempg, tempb);
 	}
 
 }
@@ -665,32 +678,41 @@ static Pixel2 *cuda_print_av_col(Image *im) {
 	Pixel2 *h_av;
 	Pixel2 *av;
 	Image *d_im;
-
+	h_av = (Pixel2*)malloc(sizeof(Pixel2)); // declare host version of average pixel
 
 	int numel = im->width * im->height; // Number of elements in image, so we dont exceed image bounds
 	int *d_numel = &numel;
-	cudaMalloc(&d_numel, sizeof(int));
+	gpuErrchk(cudaMalloc(&d_numel, sizeof(int)));
+	gpuErrchk(cudaMemcpy(d_numel, &numel, sizeof(int), cudaMemcpyHostToDevice));
 
-	cudaMallocManaged((void**)&av, sizeof(Pixel2)); // allocate memory on device for average pixel
-	cudaMemset(av, 0, sizeof(Pixel2)); // set av vals to 0 (initialising)
+	gpuErrchk(cudaMalloc((void**)&av, sizeof(Pixel2))); // allocate memory on device for average pixel
 
-	h_av = (Pixel2*)malloc(sizeof(Pixel2)); // declare host version of average pixel
+	gpuErrchk(cudaMemset(av, 0, sizeof(Pixel2))); // set av vals to 0 (initialising)
 
-	cudaMalloc((void**)&d_im, sizeof(Image)); // allocate space for image on device
-	cudaMemset(d_im, 0, sizeof(Image)); // set image values to 0
-	cudaMemcpy(im, d_im, sizeof(im), cudaMemcpyHostToDevice);
-
-	unsigned int THREADS_PER_BLOCK = 32; // defne kernel params
+	int test = sizeof(*im);
+	int test2 = sizeof(im);
 	
-	unsigned int BLOCKS = numel / THREADS_PER_BLOCK;
 
-	dim3 threadsPerBlock(32 , 1 , 1 );
-	int N = numel / threadsPerBlock.x;
-	dim3 blocksPerGrid(N, 1, 1);
+	gpuErrchk(cudaMalloc((void**)&d_im, sizeof(*im))); // allocate space for image on device
+	gpuErrchk(cudaMemset(d_im, 0, sizeof(*im))); // set image values to 0
 
-	cuda_av_kern << <blocksPerGrid, threadsPerBlock >> > (d_im, av, d_numel);
+	gpuErrchk(cudaMemcpy(d_im, im, sizeof(*im), cudaMemcpyHostToDevice)); // move image data to device
 
-	cudaMemcpy(h_av, av, sizeof(Pixel), cudaMemcpyDeviceToHost); // bring average back to host
+
+	dim3 threadsPerBlock(32 , 1 , 1 ); // static blocks of 32 for now
+	double N = round((double)numel / (double)threadsPerBlock.x);
+	dim3 blocksPerGrid(8, 1, 1); // uses minimum amount of 32 blocks
+
+	cuda_av_kern <<<blocksPerGrid, threadsPerBlock >>> (d_im, av, d_numel); // runs kernel
+	cudaError_t kern_error = cudaGetLastError();
+	gpuErrchk(cudaPeekAtLastError());
+	gpuErrchk(cudaDeviceSynchronize());
+
+
+
+	gpuErrchk(cudaMemcpy(h_av, av, sizeof(Pixel2), cudaMemcpyDeviceToHost)); // bring average back to host
+
+	cudaFree(av); cudaFree(d_im); cudaFree(d_numel); // free device memory
 
 	printf("CUDA Average image colour red = %d, green = %d, blue = %d \n", h_av->r, h_av->g, h_av->b);
 
