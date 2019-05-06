@@ -27,6 +27,7 @@ typedef struct {
 	unsigned int height, width, magic, max_val;
 	Pixel2 *data;
 } Image;
+
 typedef struct {
 	int start, stop;
 } Timer;
@@ -42,7 +43,7 @@ void output_ppm(char *filename, Image *im);
 static Image *omp_mosaic_filter(Image *im, unsigned int c);
 static Pixel2 *seq_print_av_col(Image *im);
 static Pixel2 *omp_print_av_col(Image *im);
-static Pixel2 *cuda_print_av_col(Image *im);
+static Pixel2 cuda_print_av_col(Image *im);
 
 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
@@ -137,6 +138,10 @@ int main(int argc, char *argv[]) {
 	}
 	case (CUDA): {
 		printf("CUDA Implementation not required for assignment part 1\n");
+		clock_t start, stop;
+
+		Pixel2 av = cuda_print_av_col(im_in);
+
 
 		break;
 	}
@@ -171,7 +176,7 @@ int main(int argc, char *argv[]) {
 		//TODO: starting timing here
 		start = clock();
 		//TODO: calculate the average colour value
-		glob_av = cuda_print_av_col(im_in);
+		Pixel2 cuda_av = cuda_print_av_col(im_in);
 		// Output the average colour value for the image
 
 		//TODO: end timing here
@@ -350,20 +355,17 @@ static Image *import_ppm_hdr(char *imagein, char *binmode) {
 
 	else if (strcmp(binmode, "PPM_PLAIN_TEXT") == 0) {
 		for (i = 0; i < width * height; i++) {
-			fscanf(file_point, "%c %c %c", &im->data[i].r, &im->data[i].g, &im->data[i].b);
+			fscanf(file_point, "%c %c %c", &data[i].r, &data[i].g, &data[i].b);
 		}
 	}
-	for (i = 0; i < width*height; i++) {
-		Pixel tempr = data[i];
-	}
 
-	int numel = width*height;
+
+	int numel = width * height;
 
 	for (i = 0; i < numel; i++) {
 		data_int[i].r = data[i].r;
 		data_int[i].g = data[i].g;
 		data_int[i].b = data[i].b;
-		int tempb = data[i].b, tempb2 = data_int[i].b;
 	}
 
 	im->magic = magic[1] - '0';
@@ -463,9 +465,9 @@ static Image *seq_mosaic_filter(Image *im, unsigned int c) {
 			local_g = local_g / (c_dub*c_dub);
 			local_b = local_b / (c_dub*c_dub);
 
-			local_av->r = round(local_r);
-			local_av->g = round(local_g);
-			local_av->b = round(local_b);
+			local_av->r = (int)round(local_r);
+			local_av->g = (int)round(local_g);
+			local_av->b = (int)round(local_b);
 			local_r = 0, local_g = 0, local_b = 0;
 			for (k = 0; k < c*c; k++) { // iterate through the indexes we stored when we were calculating the window average and assign averge values into the image.
 				write_idx = window_idxs[k];
@@ -516,7 +518,7 @@ static Image *omp_mosaic_filter(Image *im, unsigned int c) {
 	height_idxs = (int*)malloc(rows_required * sizeof(int));
 	width_idxs = (int*)malloc(cols_required * sizeof(int));
 	int n;
-	double local_r = 0, local_g = 0, local_b = 0, c_2 = (double)c*c;
+	double c_2 = (double)c*c;
 
 
 	for (n = 0; n < rows_required; n++) {
@@ -537,6 +539,7 @@ static Image *omp_mosaic_filter(Image *im, unsigned int c) {
 		for (i = 0; i < cols_required; i++) {
 			for (j = 0; j < rows_required; j++) {
 				Pixel2 local_av;
+				double local_r = 0, local_g = 0, local_b = 0;
 				unsigned int k = 0, l = 0;
 
 				int col_idx, row_idx, im_idx, relative_index, write_idx;
@@ -557,13 +560,13 @@ static Image *omp_mosaic_filter(Image *im, unsigned int c) {
 						local_b = local_b + (double)im->data[im_idx + relative_index].b;
 					}
 				}
-				local_r = local_r / (c_2);
-				local_g = local_g / (c_2);
-				local_b = local_b / (c_2);
+				local_r = round(local_r / (c_2));
+				local_g = round(local_g / (c_2));
+				local_b = round(local_b / (c_2));
 
-				local_av.r = (char)local_r;
-				local_av.g = (char)local_g;
-				local_av.b = (char)local_b;
+				local_av.r = (int)local_r;
+				local_av.g = (int)local_g;
+				local_av.b = (int)local_b;
 				local_r = 0, local_g = 0, local_b = 0;
 
 				for (k = 0; k < c*c; k++) { // iterate through the indexes we stored when we were calculating the window average and assign averge values into the image.
@@ -592,15 +595,15 @@ static Pixel2 *seq_print_av_col(Image *im) {
 			bglob_av = bglob_av + (double)im->data[idx].b;
 		}
 	}
-	rglob_av = rglob_av / n;
-	gglob_av = gglob_av / n;
-	bglob_av = bglob_av / n;
+	rglob_av = round(rglob_av / n);
+	gglob_av = round(gglob_av / n);
+	bglob_av = round(bglob_av / n);
 	// Output the average colour value for the image
 	Pixel2 *glob_av;
 	glob_av = (Pixel2*)malloc(sizeof(Pixel2));
-	glob_av->r = rglob_av;
-	glob_av->g = gglob_av;
-	glob_av->b = bglob_av;
+	glob_av->r = (int)rglob_av;
+	glob_av->g = (int)gglob_av;
+	glob_av->b = (int)bglob_av;
 	printf("CPU Average image colour red = %d, green = %d, blue = %d \n", glob_av->r, glob_av->g, glob_av->b);
 	return glob_av;
 }
@@ -612,9 +615,9 @@ static Pixel2 *omp_print_av_col(Image *im) {
 	int i, j, idx;
 
 #pragma omp parallel for
-	for (i = 0; i < im->height; i++) {
+	for (i = 0; i < (int)im->height; i++) {
 		double tempr = 0, tempg = 0, tempb = 0;
-		for (j = 0; j < im->width; j++) {
+		for (j = 0; j < (int)im->width; j++) {
 			idx = (i*im->width) + j;
 			if (idx == 0) {
 				tempr = (double)im->data[idx].r;
@@ -641,82 +644,89 @@ static Pixel2 *omp_print_av_col(Image *im) {
 
 	Pixel2 *glob_av;
 	glob_av = (Pixel2*)malloc(sizeof(Pixel2));
-	glob_av->r = round(rglob_av);
-	glob_av->g = round(gglob_av);
-	glob_av->b = round(bglob_av);
+	glob_av->r = (int)round(rglob_av);
+	glob_av->g = (int)round(gglob_av);
+	glob_av->b = (int)round(bglob_av);
 	printf("OMP Average image colour red = %d, green = %d, blue = %d \n", glob_av->r, glob_av->g, glob_av->b);
 	return glob_av;
 }
 
-__global__ void cuda_av_kern(Image *im, Pixel2 *av, int *d_numel) {
+__global__ void cuda_av_kern(Image *im, Pixel2 *av) {
 
-	//int idx = threadIdx.x + blockIdx.x * blockDim.x;
-	int idx = 0;
-	int tempr = 0, tempg = 0 , tempb = 0;
-
-	printf("thread idx is %d", idx);
+	int idx = threadIdx.x + blockIdx.x * blockDim.x;
+	int tempr = 0, tempg = 0, tempb = 0;
 
 	if (idx == idx) {
 		tempr = im->data[idx].r;
 		tempg = im->data[idx].g;
 		tempb = im->data[idx].b;
 
-		/*int *r, *g, *b;
+		int *r, *g, *b;
 		r = &av->r;
 		g = &av->g;
 		b = &av->b;
 
 		tempr = atomicAdd(r, tempr);
 		tempg = atomicAdd(g, tempg);
-		tempb = atomicAdd(b, tempb);*/
-		printf("the value being added is %d %d %d \n", tempr, tempg, tempb);
+		tempb = atomicAdd(b, tempb);
+		//printf("the value being added is %d %d %d \n", tempr, tempg, tempb);
 	}
 
 }
 
-static Pixel2 *cuda_print_av_col(Image *im) {
-	Pixel2 *h_av;
-	Pixel2 *av;
-	Image *d_im;
-	h_av = (Pixel2*)malloc(sizeof(Pixel2)); // declare host version of average pixel
+static Pixel2 cuda_print_av_col(Image *im) {
+	Image h_image;
+	Image hd_image;
+	Image *d_image;
 
-	int numel = im->width * im->height; // Number of elements in image, so we dont exceed image bounds
-	int *d_numel = &numel;
-	gpuErrchk(cudaMalloc(&d_numel, sizeof(int)));
-	gpuErrchk(cudaMemcpy(d_numel, &numel, sizeof(int), cudaMemcpyHostToDevice));
+	h_image = *im;
+	hd_image = h_image;
 
-	gpuErrchk(cudaMalloc((void**)&av, sizeof(Pixel2))); // allocate memory on device for average pixel
+	Pixel2 av;
+	av.r = 0; av.g = 0; av.b = 0;
+	Pixel2 *d_av;
 
-	gpuErrchk(cudaMemset(av, 0, sizeof(Pixel2))); // set av vals to 0 (initialising)
-
-	int test = sizeof(*im);
-	int test2 = sizeof(im);
-	
-
-	gpuErrchk(cudaMalloc((void**)&d_im, sizeof(*im))); // allocate space for image on device
-	gpuErrchk(cudaMemset(d_im, 0, sizeof(*im))); // set image values to 0
-
-	gpuErrchk(cudaMemcpy(d_im, im, sizeof(*im), cudaMemcpyHostToDevice)); // move image data to device
+	int numel = h_image.width*h_image.height;
 
 
-	dim3 threadsPerBlock(32 , 1 , 1 ); // static blocks of 32 for now
-	double N = round((double)numel / (double)threadsPerBlock.x);
+
+	//Moving image data to device
+	gpuErrchk(cudaMalloc(&hd_image.data, h_image.width*h_image.height * sizeof(Pixel2)));
+	gpuErrchk(cudaMemcpy(hd_image.data, h_image.data, h_image.width*h_image.height * sizeof(Pixel2), cudaMemcpyHostToDevice));
+	gpuErrchk(cudaMalloc(&d_image, sizeof(Image)));
+	gpuErrchk(cudaMemcpy(d_image, &hd_image, sizeof(Image), cudaMemcpyHostToDevice));
+
+	//Moving Pixel for average to device
+	gpuErrchk(cudaMalloc(&d_av, sizeof(Pixel2)));
+	gpuErrchk(cudaMemcpy(d_av, &av, sizeof(Pixel2), cudaMemcpyHostToDevice));
+
+	dim3 threadsPerBlock(32, 1, 1); // static blocks of 32 for now
+
 	dim3 blocksPerGrid(8, 1, 1); // uses minimum amount of 32 blocks
 
-	cuda_av_kern <<<blocksPerGrid, threadsPerBlock >>> (d_im, av, d_numel); // runs kernel
+	cuda_av_kern << <blocksPerGrid, threadsPerBlock >> > (d_image, d_av); // runs kernel
 	cudaError_t kern_error = cudaGetLastError();
 	gpuErrchk(cudaPeekAtLastError());
 	gpuErrchk(cudaDeviceSynchronize());
 
+	gpuErrchk(cudaMemcpy(&av, d_av, sizeof(Pixel2), cudaMemcpyDeviceToHost));
 
+	int avr, avg, avb;
+	avr = (int)round((double)av.r / (double)numel);
+	avg = (int)round((double)av.g / (double)numel);
+	avb = (int)round((double)av.b / (double)numel);
 
-	gpuErrchk(cudaMemcpy(h_av, av, sizeof(Pixel2), cudaMemcpyDeviceToHost)); // bring average back to host
+	printf("CUDA Average image colour red = %d, green = %d, blue = %d \n", avr, avg, avb);
 
-	cudaFree(av); cudaFree(d_im); cudaFree(d_numel); // free device memory
+	gpuErrchk(cudaFree(hd_image.data));
+	hd_image.data = 0;
+	gpuErrchk(cudaFree(d_image));
+	d_image = 0;
 
-	printf("CUDA Average image colour red = %d, green = %d, blue = %d \n", h_av->r, h_av->g, h_av->b);
+	free(h_image.data);
+	h_image.data = 0;
 
-	return h_av;
+	return av;
 }
 
 //for (int c_x = 0; c_x<16; c_x++){
