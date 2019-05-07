@@ -5,6 +5,13 @@
 #include <time.h>
 #include <math.h>
 #include <omp.h>
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+#include <vector_types.h>
+#include <vector_functions.h>
+#include "cuda_texture_types.h"
+#include "texture_fetch_functions.hpp"
+
 
 #define FAILURE 0
 #define SUCCESS !FAILURE
@@ -44,6 +51,7 @@ static Image *omp_mosaic_filter(Image *im, unsigned int c);
 static Pixel2 *seq_print_av_col(Image *im);
 static Pixel2 *omp_print_av_col(Image *im);
 static Pixel2 cuda_print_av_col(Image *im);
+static Image cuda_mosaic_filter2(Image *im, int mosaic_dim);
 
 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
@@ -106,7 +114,6 @@ int main(int argc, char *argv[]) {
 	switch (execution_mode) {
 	case (CPU): {
 
-		//TODO: starting timing here
 		clock_t start, stop;
 		start = clock();
 		Pixel2 *glob_av;
@@ -118,6 +125,7 @@ int main(int argc, char *argv[]) {
 		//TODO: end timing here
 		stop = clock();
 		printf("CPU mode execution time took %.4fs\n", ((double)(stop - start) / CLOCKS_PER_SEC));
+
 		break;
 	}
 	case (OPENMP): {
@@ -137,11 +145,18 @@ int main(int argc, char *argv[]) {
 		break;
 	}
 	case (CUDA): {
-		printf("CUDA Implementation not required for assignment part 1\n");
 		clock_t start, stop;
+		//TODO: starting timing here
+		start = clock();
+		//TODO: calculate the average colour value
+		Pixel2 cuda_av = cuda_print_av_col(im_in);
+		// Output the average colour value for the image
+		Image cuda_im;
+		cuda_im = cuda_mosaic_filter2(im_in, c); im_in = &cuda_im;
 
-		Pixel2 av = cuda_print_av_col(im_in);
-
+		//TODO: end timing here
+		stop = clock();
+		printf("CUDA mode execution time took %.4fs\n", ((double)(stop - start) / CLOCKS_PER_SEC));
 
 		break;
 	}
@@ -162,15 +177,15 @@ int main(int argc, char *argv[]) {
 
 
 		//TODO: starting timing here
-		start = clock();
+		//start = clock();
 		//TODO: calculate the average colour value
-		glob_av = omp_print_av_col(im_in);
+		//glob_av = omp_print_av_col(im_in);
 		// Output the average colour value for the image
-		im_in = pad_array(im_in, c, glob_av);
-		im_in = omp_mosaic_filter(im_in, c);
+		//im_in = pad_array(im_in, c, glob_av);
+		//im_in = omp_mosaic_filter(im_in, c);
 		//TODO: end timing here
-		stop = clock();
-		printf("OPENMP mode execution time took %.4fs\n", ((double)(stop - start) / CLOCKS_PER_SEC));
+		//stop = clock();
+		//printf("OPENMP mode execution time took %.4fs\n", ((double)(stop - start) / CLOCKS_PER_SEC));
 
 
 		//TODO: starting timing here
@@ -178,6 +193,8 @@ int main(int argc, char *argv[]) {
 		//TODO: calculate the average colour value
 		Pixel2 cuda_av = cuda_print_av_col(im_in);
 		// Output the average colour value for the image
+		Image cuda_im;
+		cuda_im = cuda_mosaic_filter2(im_in, c); im_in = &cuda_im;
 
 		//TODO: end timing here
 		stop = clock();
@@ -234,7 +251,7 @@ int process_command_line(int argc, char *argv[]) {
 
 	imageout = 0; // SET DEFUALTS
 	imagein = 0;
-	binmode = "PPM_BINARY";
+	binmode = (char*)"PPM_BINARY";
 	while (_argc < argc)
 	{
 		if (strcmp("-o", argv[_argc]) == 0) //WHEN -0 IS FOUND IN ARGS SET NEXT ARG TO OUPUT
@@ -331,7 +348,7 @@ static Image *import_ppm_hdr(char *imagein, char *binmode) {
 	while (temp[0] == '#') {
 		fgets(temp, sizeof(temp), file_point);
 	}
-	sscanf(temp, "%d", &max_val); // assign next found number to max
+	sscanf(temp, "%d \n", &max_val); // assign next found number to max
 
 								  //while (fgetc(file_point) != '\n');
 
@@ -500,12 +517,21 @@ void output_ppm(char *filename, Image *im) {
 	// rgb component depth
 	fprintf(file_point, "%d\n", im->max_val);
 
+	Pixel *char_data;
+	char_data = (Pixel*)malloc(im->width * im->height * sizeof(Pixel)); //memory needed for image = number of elements * memory size of 1 pixel
+	for (unsigned int i = 0; i < im->height*im->width; i++) {
+		char_data[i].r = (unsigned char)im->data[i].r;
+		char_data[i].g = (unsigned char)im->data[i].g;
+		char_data[i].b = (unsigned char)im->data[i].b;
+	}
+
 	// pixel data
 	/*unsigned int i;
 	for (i = 0; i < im->width * im->height; i++) {
-	fprintf(file_point, "%d %d %d ", im->data->r, im->data->g, im->data->b);
+	fprintf(file_point, "%c %c %c ", char_data[i].r, char_data[i].g, char_data[i].b);
 	}*/
-	fwrite(im->data, 3 * im->width, im->height, file_point);
+
+	fwrite(char_data, sizeof(Pixel), im->height*im->width, file_point);
 	fclose(file_point);
 }
 
@@ -651,12 +677,12 @@ static Pixel2 *omp_print_av_col(Image *im) {
 	return glob_av;
 }
 
-__global__ void cuda_av_kern(Image *im, Pixel2 *av) {
+__global__ void cuda_av_kern(Image *im, Pixel2 *av, int *numel) {
 
 	int idx = threadIdx.x + blockIdx.x * blockDim.x;
 	int tempr = 0, tempg = 0, tempb = 0;
 
-	if (idx == idx) {
+	if (idx < *numel) {
 		tempr = im->data[idx].r;
 		tempg = im->data[idx].g;
 		tempb = im->data[idx].b;
@@ -674,6 +700,210 @@ __global__ void cuda_av_kern(Image *im, Pixel2 *av) {
 
 }
 
+__global__ void cuda_mosaic_kern(Image *im, int *numel) {
+
+	int skip_line = im->width;
+	int block_start = (blockIdx.x*blockDim.x) + (blockIdx.y*blockDim.y*skip_line);
+	int thread_relative = threadIdx.x + (threadIdx.y*skip_line);
+	int idx = block_start + thread_relative;
+	//int block_size = blockDim.x*blockDim.y
+
+	int truey = blockIdx.y*blockDim.y + threadIdx.y;
+	int truex = blockIdx.x*blockDim.x + threadIdx.x;
+
+
+	int tempr = 0, tempg = 0, tempb = 0;
+	__shared__  int mosaic_r, mosaic_g, mosaic_b, tally;
+
+	/*if (idx == 0) {
+		mosaic_r = 0; mosaic_g = 0; mosaic_b = 0;
+	}*/
+	__syncthreads();
+
+	if (truey < im->height && truex < im->width) {
+		tempr = im->data[idx].r;
+		tempg = im->data[idx].g;
+		tempb = im->data[idx].b;
+
+		int *r, *g, *b, *t;
+		r = &mosaic_r;
+		g = &mosaic_g;
+		b = &mosaic_b;
+		t = &tally;
+
+		atomicAdd(r, tempr);
+		atomicAdd(g, tempg);
+		atomicAdd(b, tempb);
+		atomicAdd(t, 1);
+	}
+	__syncthreads();
+	if (truey < im->height && truex < im->width) {
+		im->data[idx].r = (int)round((double)mosaic_r / (double)(tally));
+		im->data[idx].g = (int)round((double)mosaic_g / (double)(tally));
+		im->data[idx].b = (int)round((double)mosaic_b / (double)(tally));
+
+	}
+	
+}
+
+//__global__ void cuda_mosaic_kern3(Image *im, int *numel) {
+//
+//	int skip_line = im->width;
+//	int block_start = (blockIdx.x*blockDim.x) + (blockIdx.y*blockDim.y*skip_line);
+//	int thread_relative = threadIdx.x + (threadIdx.y*skip_line);
+//	int idx = block_start + thread_relative;
+//	int tid = threadIdx.x + threadIdx.y*blockDim.x;
+//
+//	int truey = blockIdx.y*blockDim.y + threadIdx.y;
+//	int truex = blockIdx.x*blockDim.x + threadIdx.x;
+//
+//	int tempr = 0, tempg = 0, tempb = 0;
+//	extern __shared__  int s_mem[];
+//	int size_share = sizeof(s_mem);
+//	int*   mosaic_r = (int*)&s_mem[64];
+//	__syncthreads();
+//
+//	if (truey < im->height && truex < im->width) {
+//		mosaic_r[tid] = im->data[idx].r;
+//		mosaic_g[tid] = im->data[idx].g;
+//		mosaic_b[tid] = im->data[idx].b;
+//		
+//	}
+//	__syncthreads();
+//	// do reduction in shared mem
+//	/*if (truey < im->height && truex < im->width) {
+//		for (unsigned int s = 1; s < blockDim.x; s *= 2) {
+//			if (tid % (2 * s) == 0) {
+//				mosaic_r[tid] += mosaic_r[tid + s];
+//				mosaic_g[tid] += mosaic_g[tid + s];
+//				mosaic_b[tid] += mosaic_b[tid + s];
+//			}
+//		}
+//	}*/
+//	__syncthreads();
+//	
+//	if (truey < im->height && truex < im->width) {
+//		im->data[idx].r = (int)round((double)mosaic_r[0] / (double)(1024));
+//		im->data[idx].g = (int)round((double)mosaic_g[0] / (double)(1024));
+//		im->data[idx].b = (int)round((double)mosaic_b[0] / (double)(1024));
+//	}
+//
+//}
+
+__global__ void cuda_mosaic_kern4(Image *im, int *numel) {
+
+	int skip_line = im->width;
+	int block_start = (blockIdx.x*blockDim.x) + (blockIdx.y*blockDim.y*skip_line);
+	int thread_relative = threadIdx.x + (threadIdx.y*skip_line);
+	int idx = block_start + thread_relative;
+
+	int truey = blockIdx.y*blockDim.y + threadIdx.y;
+	int truex = blockIdx.x*blockDim.x + threadIdx.x;
+
+	int tempr = 0, tempg = 0, tempb = 0;
+	extern __shared__  Pixel2 mosaic_av;
+	__syncthreads();
+
+	if (truey < im->height && truex < im->width) {
+		tempr = im->data[idx].r;
+		tempg = im->data[idx].g;
+		tempb = im->data[idx].b;
+
+		int *r, *g, *b;
+		r = &mosaic_av.r;
+		g = &mosaic_av.g;
+		b = &mosaic_av.b;
+
+		atomicAdd(r, tempr);
+		atomicAdd(g, tempg);
+		atomicAdd(b, tempb);
+	}
+	__syncthreads();
+	if (truey < im->height && truex < im->width) {
+		im->data[idx].r = (int)round((double)mosaic_av.r / (double)(1024));
+		im->data[idx].g = (int)round((double)mosaic_av.g / (double)(1024));
+		im->data[idx].b = (int)round((double)mosaic_av.b / (double)(1024));
+	}
+}
+
+__global__ void cuda_simple_mosaic_kern(Image *im, int *numel) {
+	// secify variables we need for calculating indexes
+	int skipline = im->width;
+	int mosaic_start = (threadIdx.x*blockDim.x) + (threadIdx.y*blockDim.y*skipline);
+	int relative_index = 0, absolute_index = 0;
+	int i, j;
+
+	int tile_av_r = 0, tile_av_g = 0, tile_av_b = 0;
+
+	// iterate through mosaic accumulating values
+	for (i = 0; i >= blockDim.x; i++) {
+		for (j = 0; j >= blockDim.y; j++) {
+			relative_index = i + j * skipline;
+			absolute_index = mosaic_start + relative_index;
+			if (absolute_index > *numel) {
+				tile_av_r += im->data[absolute_index].r;
+				tile_av_g += im->data[absolute_index].g;
+				tile_av_b += im->data[absolute_index].b;
+			}
+		}
+	}
+
+	// calculate mean of all R, G and B values
+	tile_av_r = (int)round((double)tile_av_r / (double)(blockDim.x*blockDim.y));
+	tile_av_g = (int)round((double)tile_av_g / (double)(blockDim.x*blockDim.y));
+	tile_av_b = (int)round((double)tile_av_b / (double)(blockDim.x*blockDim.y));
+
+	// reiterate and assign averages to pixels.
+	for (i = 0; i >= blockDim.x; i++) {
+		for (j = 0; j >= blockDim.y; j++) {
+			relative_index = i + j * skipline;
+			absolute_index = mosaic_start + relative_index;
+			if (absolute_index > *numel) {
+				im->data[absolute_index].r = tile_av_r;
+				im->data[absolute_index].g = tile_av_g;
+				im->data[absolute_index].b = tile_av_b;
+			}
+		}
+	}
+}
+
+__global__ void cuda_inter_mosaic_kern(Image *im, Pixel2 *data, Pixel2 *tile_averages) {
+	// secify variables we need for calculating indexes
+	int skipline = im->width;
+	int mosaic_start = (blockIdx.x*blockDim.x) + (blockIdx.y*blockDim.y*skipline);
+	int thread_relative = threadIdx.x + (threadIdx.y*skipline);
+	int idx = mosaic_start + thread_relative;
+	int tile_avs_idx = blockIdx.x + (blockIdx.y*gridDim.x);
+
+	int truey = blockIdx.y*blockDim.y + threadIdx.y;
+	int truex = blockIdx.x*blockDim.x + threadIdx.x;
+
+	int tempr = 0, tempg = 0, tempb = 0;
+
+	if (truey < im->height && truex < im->width) {
+		tempr = data[idx].r;
+		tempg = data[idx].g;
+		tempb = data[idx].b;
+
+		int *r, *g, *b;
+		r = &tile_averages[tile_avs_idx].r;
+		g = &tile_averages[tile_avs_idx].g;
+		b = &tile_averages[tile_avs_idx].b;
+
+		atomicAdd(r, tempr);
+		atomicAdd(g, tempg);
+		atomicAdd(b, tempb);
+
+
+
+	}
+	__syncthreads();
+	if (truey < im->height && truex < im->width) {
+		data[idx] = tile_averages[tile_avs_idx];
+	}
+
+}
+
 static Pixel2 cuda_print_av_col(Image *im) {
 	Image h_image;
 	Image hd_image;
@@ -687,8 +917,8 @@ static Pixel2 cuda_print_av_col(Image *im) {
 	Pixel2 *d_av;
 
 	int numel = h_image.width*h_image.height;
-
-
+	int N = (int)round((double)numel / (double)32 );
+	int *d_numel;
 
 	//Moving image data to device
 	gpuErrchk(cudaMalloc(&hd_image.data, h_image.width*h_image.height * sizeof(Pixel2)));
@@ -700,11 +930,14 @@ static Pixel2 cuda_print_av_col(Image *im) {
 	gpuErrchk(cudaMalloc(&d_av, sizeof(Pixel2)));
 	gpuErrchk(cudaMemcpy(d_av, &av, sizeof(Pixel2), cudaMemcpyHostToDevice));
 
+	gpuErrchk(cudaMalloc(&d_numel, sizeof(int)));
+	gpuErrchk(cudaMemcpy(d_numel, &numel, sizeof(int), cudaMemcpyHostToDevice));
+
 	dim3 threadsPerBlock(32, 1, 1); // static blocks of 32 for now
 
-	dim3 blocksPerGrid(8, 1, 1); // uses minimum amount of 32 blocks
+	dim3 blocksPerGrid(N, 1, 1); // uses minimum amount of 32 blocks
 
-	cuda_av_kern << <blocksPerGrid, threadsPerBlock >> > (d_image, d_av); // runs kernel
+	cuda_av_kern << <blocksPerGrid, threadsPerBlock >> > (d_image, d_av, d_numel); // runs kernel
 	cudaError_t kern_error = cudaGetLastError();
 	gpuErrchk(cudaPeekAtLastError());
 	gpuErrchk(cudaDeviceSynchronize());
@@ -723,30 +956,105 @@ static Pixel2 cuda_print_av_col(Image *im) {
 	gpuErrchk(cudaFree(d_image));
 	d_image = 0;
 
-	free(h_image.data);
-	h_image.data = 0;
-
 	return av;
 }
 
-//for (int c_x = 0; c_x<16; c_x++){
-//	for (int c_y = 0; c_y < 16; c_y++)
-//	{
-//
-//		//
-//
-//		for (int i_x = 0; i_x < 16; i_x++) {
-//			int x = c_x * C + i_x;
-//			if (x < width)
-//			{
-//				for (int i_y = 0; i_y < 16; i_y++)
-//				{
-//					if
-//					int y = c_y * c + i_y;
-//					image[y][x]
-//						images[y*width + x]
-//				}
-//			}
-//		}
-//	}
-//}
+static Image cuda_mosaic_filter2(Image *im, int mosaic_dim) {
+	Image h_image;
+	Image hd_image;
+	Image *d_image;
+
+	h_image = *im;
+	hd_image = h_image;
+
+
+	int numel = h_image.width*h_image.height;
+	int *d_numel;
+
+	
+
+	//Decide how to process based on dimensions
+	if (h_image.height * h_image.width <= 1024 && mosaic_dim * mosaic_dim <= 1024) {
+		//Moving image data to device
+		gpuErrchk(cudaMalloc((void **)&hd_image.data, h_image.width*h_image.height * sizeof(Pixel2)));
+		gpuErrchk(cudaMemcpy(hd_image.data, h_image.data, h_image.width*h_image.height * sizeof(Pixel2), cudaMemcpyHostToDevice));
+		gpuErrchk(cudaMalloc(&d_image, sizeof(Image)));
+		gpuErrchk(cudaMemcpy(d_image, &hd_image, sizeof(Image), cudaMemcpyHostToDevice));
+
+		//moving numel int to device
+		gpuErrchk(cudaMalloc(&d_numel, sizeof(int)));
+		gpuErrchk(cudaMemcpy(d_numel, &numel, sizeof(int), cudaMemcpyHostToDevice));
+
+
+
+		//do 1 thread per mosaic tile
+		int numy = (int)ceil((double)im->height / (double)c), numx = (int)ceil((double)im->width / (double)c);
+		dim3 threadsPerBlock(numy, numx, 1);
+		dim3 blocksPerGrid(1, 1, 1);
+		// run kernel
+		cuda_simple_mosaic_kern << < blocksPerGrid, threadsPerBlock >> > (d_image, d_numel);
+		cudaError_t kern_error = cudaGetLastError();
+		gpuErrchk(cudaPeekAtLastError());
+		gpuErrchk(cudaDeviceSynchronize());
+
+		//Bring back modified data from device to host
+		gpuErrchk(cudaMemcpy(&h_image, d_image, sizeof(Image), cudaMemcpyDeviceToHost));
+		Pixel2* out_image;
+		out_image = (Pixel2*)malloc(h_image.height*h_image.width * sizeof(Pixel2));
+		gpuErrchk(cudaMemcpy(out_image, d_image->data, h_image.width*h_image.height * sizeof(Pixel2), cudaMemcpyDeviceToHost));
+
+		// free memory
+		gpuErrchk(cudaFree(hd_image.data));
+		hd_image.data = 0;
+		gpuErrchk(cudaFree(d_image));
+		d_image = 0;
+	}
+
+	else if (h_image.height * h_image.width >= 1024 && mosaic_dim * mosaic_dim <= 1024) {
+		//1 block per mosaic tile
+		Pixel2 *d_data;
+		//calculating how many blocks we need and size of blocks for 1 block = 1 mosaic
+		dim3 threadsPerBlock(mosaic_dim, mosaic_dim, 1);
+		//int N = (int)round((double)numel / (double)(mosaic_dim*mosaic_dim));
+		int numy = (int)ceil((double)im->height / (double)c), numx = (int)ceil((double)im->width / (double)c);
+		dim3 blocksPerGrid(numx, numy, 1);
+
+		Pixel2 *mosaic_vals, *d_mosaic_vals;
+		mosaic_vals = (Pixel2*)malloc(numy*numx*sizeof(Pixel2));
+		gpuErrchk(cudaMalloc((void **)&d_mosaic_vals, numy*numx * sizeof(Pixel2)));
+		gpuErrchk(cudaMemset(d_mosaic_vals, 0, numy*numx * sizeof(Pixel2)));
+
+		gpuErrchk(cudaMalloc((void **)&d_data, h_image.width*h_image.height * sizeof(Pixel2)));
+		gpuErrchk(cudaMemcpy(d_data, im->data, h_image.width*h_image.height * sizeof(Pixel2), cudaMemcpyHostToDevice));
+
+		gpuErrchk(cudaMalloc(&d_image, sizeof(Image)));
+		gpuErrchk(cudaMemcpy(d_image, &h_image, sizeof(Image), cudaMemcpyHostToDevice));
+		gpuErrchk(cudaMalloc((void **)&d_mosaic_vals, numy*numx * sizeof(Pixel2)));
+
+		// run kernel and check execution
+		cuda_inter_mosaic_kern << <blocksPerGrid, threadsPerBlock >> > (d_image, d_data, d_mosaic_vals); // runs kernel
+		cudaError_t kern_error = cudaGetLastError();
+		gpuErrchk(cudaPeekAtLastError());
+		gpuErrchk(cudaDeviceSynchronize());
+
+		Pixel2 *h_data;
+		h_data = (Pixel2*)malloc(h_image.width*h_image.height * sizeof(Pixel2));
+
+		gpuErrchk(cudaMemcpy(h_data, d_data, h_image.width*h_image.height * sizeof(Pixel2), cudaMemcpyDeviceToHost));
+		h_image.data = h_data;
+
+		gpuErrchk(cudaFree(d_data));
+		gpuErrchk(cudaFree(d_image));
+		
+
+	}
+
+
+
+	return h_image;
+}
+
+
+
+
+
