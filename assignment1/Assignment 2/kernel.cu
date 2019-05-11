@@ -58,6 +58,7 @@ static Pixel2 *omp_print_av_col(Image *im);
 void get_file_dims(const char* filename, int *w, int *h);
 void output_image_file(uchar4* image, const char* image_out, int w, int h);
 void input_image_file(const char* filename, uchar4* image);
+void input_image_file_SOA(const char* filename, int* image_r, int* image_b, int* image_g);
 
 
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort = true)
@@ -71,95 +72,17 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort =
 
 /* DEVICE CODE*///##########################################################################################
 
-__global__ void cuda_simple_mosaic_kern(Image *im, int *numel) {
-	// secify variables we need for calculating indexes
-	int skipline = im->width;
-	int mosaic_start = (threadIdx.x*blockDim.x) + (threadIdx.y*blockDim.y*skipline);
-	int relative_index = 0, absolute_index = 0;
-	int i, j;
-
-	int tile_av_r = 0, tile_av_g = 0, tile_av_b = 0;
-
-	// iterate through mosaic accumulating values
-	for (i = 0; i >= blockDim.x; i++) {
-		for (j = 0; j >= blockDim.y; j++) {
-			relative_index = i + j * skipline;
-			absolute_index = mosaic_start + relative_index;
-			if (absolute_index > *numel) {
-				tile_av_r += im->data[absolute_index].r;
-				tile_av_g += im->data[absolute_index].g;
-				tile_av_b += im->data[absolute_index].b;
-			}
-		}
-	}
-
-	// calculate mean of all R, G and B values
-	tile_av_r = (int)round((double)tile_av_r / (double)(blockDim.x*blockDim.y));
-	tile_av_g = (int)round((double)tile_av_g / (double)(blockDim.x*blockDim.y));
-	tile_av_b = (int)round((double)tile_av_b / (double)(blockDim.x*blockDim.y));
-
-	// reiterate and assign averages to pixels.
-	for (i = 0; i >= blockDim.x; i++) {
-		for (j = 0; j >= blockDim.y; j++) {
-			relative_index = i + j * skipline;
-			absolute_index = mosaic_start + relative_index;
-			if (absolute_index > *numel) {
-				im->data[absolute_index].r = tile_av_r;
-				im->data[absolute_index].g = tile_av_g;
-				im->data[absolute_index].b = tile_av_b;
-			}
-		}
-	}
-}
-
-__global__ void cuda_inter_mosaic_kern(Image *im, Pixel2 *data, Pixel2 *tile_averages) {
-	// secify variables we need for calculating indexes
-	int skipline = im->width;
-	int mosaic_start = (blockIdx.x*blockDim.x) + (blockIdx.y*blockDim.y*skipline);
-	int thread_relative = threadIdx.x + (threadIdx.y*skipline);
-	int idx = mosaic_start + thread_relative;
-	int tile_avs_idx = blockIdx.x + (blockIdx.y*gridDim.x);
-
-	int truey = blockIdx.y*blockDim.y + threadIdx.y;
-	int truex = blockIdx.x*blockDim.x + threadIdx.x;
-
-	int tempr = 0, tempg = 0, tempb = 0;
-
-	if (truey < im->height && truex < im->width) {
-		tempr = data[idx].r;
-		tempg = data[idx].g;
-		tempb = data[idx].b;
-
-		int *r, *g, *b;
-		r = &tile_averages[tile_avs_idx].r;
-		g = &tile_averages[tile_avs_idx].g;
-		b = &tile_averages[tile_avs_idx].b;
-
-		atomicAdd(r, tempr);
-		atomicAdd(g, tempg);
-		atomicAdd(b, tempb);
-
-
-
-	}
-	__syncthreads();
-	if (truey < im->height && truex < im->width) {
-		data[idx] = tile_averages[tile_avs_idx];
-	}
-
-}
-
 __global__ void image_blur(uchar4 *image, uchar4 *image_output, int c, int w, int h) {
 	// map from threadIdx/BlockIdx to pixel position
 	int skipline = w;
-	int idx = threadIdx.x+(blockIdx.x*blockDim.x) + (threadIdx.y*skipline)+(blockIdx.y*blockDim.y*skipline);
+	int idx = threadIdx.x + (blockIdx.x*blockDim.x) + (threadIdx.y*skipline) + (blockIdx.y*blockDim.y*skipline);
 	extern __shared__ int4 tile_av;
 
 	int truey = blockIdx.y*blockDim.y + threadIdx.y;
 	int truex = blockIdx.x*blockDim.x + threadIdx.x;
 	double numel = c * c;
 
-	if (threadIdx.x+threadIdx.y == 0) {
+	if (threadIdx.x + threadIdx.y == 0) {
 		tile_av.x = 0;
 		tile_av.y = 0;
 		tile_av.z = 0;
@@ -197,13 +120,11 @@ __global__ void image_av_col(uchar4 *image, int w, int h, int4 *av) {
 	int block_start_index = (blockIdx.x*blockDim.x) + (blockIdx.y*blockDim.y*skipline);
 	int relative_index = threadIdx.x + (threadIdx.y*skipline);
 	int idx = block_start_index + relative_index;
-	
+
 	int truey = blockIdx.y*blockDim.y + threadIdx.y;
 	int truex = blockIdx.x*blockDim.x + threadIdx.x;
 
-	__syncthreads();
-
-	if (idx < w*h) {
+	if (truey < h && truex < w) {
 		int *addr_r, *addr_g, *addr_b;
 		int localr, localg, localb;
 
@@ -218,7 +139,7 @@ __global__ void image_av_col(uchar4 *image, int w, int h, int4 *av) {
 		atomicAdd(addr_r, localr);
 		atomicAdd(addr_g, localg);
 		atomicAdd(addr_b, localb);
-		if (idx == 512*512) {
+		if (idx == 512 * 512) {
 			printf("Thread is %d %d, %d is being added \n", truex, truey, localr);
 		}
 	}
@@ -234,6 +155,88 @@ __global__ void image_av_col(uchar4 *image, int w, int h, int4 *av) {
 	}
 
 }
+
+__global__ void image_blur_SOA(int *image_r, int *image_g, int *image_b, int *image_r_out, int *image_g_out, int *image_b_out, int c, int w, int h) {
+	// map from threadIdx/BlockIdx to pixel position
+	int skipline = w;
+	int idx = threadIdx.x + (blockIdx.x*blockDim.x) + (threadIdx.y*skipline) + (blockIdx.y*blockDim.y*skipline);
+	extern __shared__ int4 tile_av;
+
+	int truey = blockIdx.y*blockDim.y + threadIdx.y;
+	int truex = blockIdx.x*blockDim.x + threadIdx.x;
+	double numel = c * c;
+
+	if (threadIdx.x + threadIdx.y == 0) {
+		tile_av.x = 0;
+		tile_av.y = 0;
+		tile_av.z = 0;
+	}
+	__syncthreads();
+
+	if (truey < h && truex < w) {
+		int *addr_r, *addr_g, *addr_b;
+		int localr, localg, localb;
+
+		localr = (int)image_r[idx];
+		localg = (int)image_g[idx];
+		localb = (int)image_b[idx];
+
+		addr_r = &tile_av.x;
+		addr_g = &tile_av.y;
+		addr_b = &tile_av.z;
+
+		atomicAdd(addr_r, localr);
+		atomicAdd(addr_g, localg);
+		atomicAdd(addr_b, localb);
+	}
+	__syncthreads();
+	if (truey < h && truex < w) {
+		image_r_out[idx] = (unsigned char)(round((double)tile_av.x / numel));
+		image_g_out[idx] = (unsigned char)(round((double)tile_av.y / numel));
+		image_b_out[idx] = (unsigned char)(round((double)tile_av.z / numel));
+	}
+
+}
+
+__global__ void image_av_col_SOA(int *image_r, int *image_g, int *image_b, int w, int h, int4 *av) {
+	// map from threadIdx/BlockIdx to pixel position
+	int skipline = w;
+	int block_start_index = (blockIdx.x*blockDim.x) + (blockIdx.y*blockDim.y*skipline);
+	int relative_index = threadIdx.x + (threadIdx.y*skipline);
+	int idx = block_start_index + relative_index;
+
+	int truey = blockIdx.y*blockDim.y + threadIdx.y;
+	int truex = blockIdx.x*blockDim.x + threadIdx.x;
+
+	if (truey < h && truex < w) {
+		int *addr_r, *addr_g, *addr_b;
+		int localr, localg, localb;
+
+		localr = image_r[idx];
+		localg = image_g[idx];
+		localb = image_b[idx];
+
+		addr_r = &av->x;
+		addr_g = &av->y;
+		addr_b = &av->z;
+
+		atomicAdd(addr_r, localr);
+		atomicAdd(addr_g, localg);
+		atomicAdd(addr_b, localb);
+	}
+
+	__syncthreads();
+	if (idx == 0) {
+		int avr, avg, avb;
+		avr = (int)round((double)av->x / (double)(w*h));
+		avg = (int)round((double)av->y / (double)(w*h));
+		avb = (int)round((double)av->z / (double)(w*h));
+
+		printf("CUDA Average image colour red = %d, green = %d, blue = %d \n", avr, avg, avb);
+	}
+
+}
+
 
 /* HOST CODE*///###########################################################################################
 
@@ -278,7 +281,7 @@ int main(int argc, char *argv[]) {
 	switch (execution_mode) {
 	case (CPU): {
 
-	
+
 		//TODO: read input image file (either binary or plain text PPM) 
 		Image *im_in;
 		im_in = (Image *)malloc(sizeof(Image));
@@ -345,99 +348,201 @@ int main(int argc, char *argv[]) {
 		uchar4 *d_image, *d_image_output;
 		uchar4 *h_image;
 		cudaEvent_t start, stop;
-		float ms; 
+		float ms;
+		int4 *d_global_av;
+		int w, h;
 
 		// create timers
 		cudaEventCreate(&start);
 		cudaEventCreate(&stop);
 
-		// allocate and load host image
-		int w, h, *d_c;
 		get_file_dims(imagein, &w, &h);
 		image_size = w * h * sizeof(uchar4);
-
 		h_image = (uchar4*)malloc(w * h * sizeof(uchar4));
-		input_image_file(imagein, h_image);
 
-		gpuErrchk(cudaHostRegister(h_image, w * h * sizeof(uchar4), cudaHostRegisterDefault));
-
-		// allocate memory on the GPU for the image and output image
-		gpuErrchk(cudaMalloc((void**)&d_image, image_size));
-		gpuErrchk(cudaMalloc((void**)&d_image_output, image_size));
-
+		// Binary switch to activate Structure of Arrays mode (1)
+		int soa = 1;
 		
+		if (soa == 0) {
 
-		// copy image to device memory
-		gpuErrchk(cudaMemcpy(d_image, h_image, image_size, cudaMemcpyHostToDevice));
+			// allocate and load host image
 
+			input_image_file(imagein, h_image);
 
-		int num_tile_y, num_tile_x;
-		num_tile_y = (int)ceil((double)h / (double)32);
-		num_tile_x = (int)ceil((double)w / (double)32);
+			gpuErrchk(cudaHostRegister(h_image, w * h * sizeof(uchar4), cudaHostRegisterDefault));
 
-		//cuda layout (print average)
-		dim3    blocksPerGrid_av(num_tile_x, num_tile_y);
-		dim3    threadsPerBlock_av(32, 32);
+			// allocate memory on the GPU for the image and output image
+			gpuErrchk(cudaMalloc((void**)&d_image, image_size));
+			gpuErrchk(cudaMalloc((void**)&d_image_output, image_size));
 
-		// normal version (print average)
-		cudaEventRecord(start, 0);
+			// copy image to device memory
+			gpuErrchk(cudaMemcpy(d_image, h_image, image_size, cudaMemcpyHostToDevice));
 
-		int4 *d_global_av;
-		gpuErrchk(cudaMalloc((void**)&d_global_av, sizeof(int4)));
-		gpuErrchk(cudaMemset(d_global_av, 0, sizeof(int4)));
+			int num_tile_y, num_tile_x;
+			num_tile_y = (int)ceil((double)h / (double)32);
+			num_tile_x = (int)ceil((double)w / (double)32);
 
-		image_av_col <<<blocksPerGrid_av, threadsPerBlock_av >>>(d_image, w, h, d_global_av);
-		gpuErrchk(cudaPeekAtLastError());
-		gpuErrchk(cudaDeviceSynchronize());
+			//cuda layout (print average)
+			dim3    blocksPerGrid_av(num_tile_x, num_tile_y);
+			dim3    threadsPerBlock_av(32, 32);
 
+			gpuErrchk(cudaMalloc((void**)&d_global_av, sizeof(int4)));
+			gpuErrchk(cudaMemset(d_global_av, 0, sizeof(int4)));
 
-		num_tile_y = (int)ceil((double)h / (double)c);
-		num_tile_x = (int)ceil((double)w / (double)c);
-
-
-		if (c <= 32) {
-			//cuda layout
-			dim3    blocksPerGrid(num_tile_x, num_tile_y);
-			dim3    threadsPerBlock(c, c);
-
-			// normal version
+			// normal version (print average)
 			cudaEventRecord(start, 0);
-			image_blur << <blocksPerGrid, threadsPerBlock >> > (d_image, d_image_output, c, w, h);
+
+			image_av_col << <blocksPerGrid_av, threadsPerBlock_av >> > (d_image, w, h, d_global_av);
 			gpuErrchk(cudaPeekAtLastError());
 			gpuErrchk(cudaDeviceSynchronize());
 
-		}
-		else if (c > 32) {
-			printf("This program uses 1 thread block per mosaic so mosaic sizes > 1024 are not supported");
-			exit(1);
+
+			num_tile_y = (int)ceil((double)h / (double)c);
+			num_tile_x = (int)ceil((double)w / (double)c);
+
+
+			if (c <= 32) {
+				//cuda layout
+				dim3    blocksPerGrid(num_tile_x, num_tile_y);
+				dim3    threadsPerBlock(c, c);
+
+				// normal version
+				cudaEventRecord(start, 0);
+				image_blur << <blocksPerGrid, threadsPerBlock >> > (d_image, d_image_output, c, w, h);
+				gpuErrchk(cudaPeekAtLastError());
+				gpuErrchk(cudaDeviceSynchronize());
+
+			}
+			else if (c > 32) {
+				printf("This program uses 1 thread block per mosaic so mosaic sizes > 1024 are not supported");
+				exit(1);
+			}
+
+			cudaEventRecord(stop, 0);
+			cudaEventSynchronize(stop);
+			cudaEventElapsedTime(&ms, start, stop);
+
+			// copy the image back from the GPU for output to file
+			gpuErrchk(cudaMemcpy(h_image, d_image_output, image_size, cudaMemcpyDeviceToHost));
+
+			//cleanup
+			cudaEventDestroy(start);
+			cudaEventDestroy(stop);
+			cudaFree(d_image);
+			cudaFree(d_image_output);
+			cudaFree(d_global_av);
+
 		}
 
-		cudaEventRecord(stop, 0);
-		cudaEventSynchronize(stop);
-		cudaEventElapsedTime(&ms, start, stop);
+		else if (soa == 1) {
 
-		// copy the image back from the GPU for output to file
-		gpuErrchk(cudaMemcpy(h_image, d_image_output, image_size, cudaMemcpyDeviceToHost));
+
+			// allocate and load host image
+			
+			get_file_dims(imagein, &w, &h);
+			image_size = w * h * sizeof(int);
+
+			int *h_image_r, *h_image_g, *h_image_b;
+			int *d_image_r, *d_image_g, *d_image_b;
+			int *d_image_r_out, *d_image_g_out, *d_image_b_out;
+
+			h_image_r = (int*)malloc(w * h * sizeof(int));
+			h_image_g = (int*)malloc(w * h * sizeof(int));
+			h_image_b = (int*)malloc(w * h * sizeof(int));
+
+			input_image_file_SOA(imagein, h_image_r, h_image_g, h_image_b);
+
+			// allocate memory on the GPU for the image and output image
+			gpuErrchk(cudaMalloc((void**)&d_image_r, image_size)); gpuErrchk(cudaMalloc((void**)&d_image_r_out, image_size));
+			gpuErrchk(cudaMalloc((void**)&d_image_g, image_size)); gpuErrchk(cudaMalloc((void**)&d_image_g_out, image_size));
+			gpuErrchk(cudaMalloc((void**)&d_image_b, image_size)); gpuErrchk(cudaMalloc((void**)&d_image_b_out, image_size));
+
+			//copy input data to device
+			gpuErrchk(cudaMemcpy(d_image_r, h_image_r, image_size, cudaMemcpyHostToDevice));
+			gpuErrchk(cudaMemcpy(d_image_g, h_image_g, image_size, cudaMemcpyHostToDevice));
+			gpuErrchk(cudaMemcpy(d_image_b, h_image_b, image_size, cudaMemcpyHostToDevice));
+
+			// number of max size blocks needed to complete calculation of average
+			int num_tile_y, num_tile_x;
+			num_tile_y = (int)ceil((double)h / (double)32);
+			num_tile_x = (int)ceil((double)w / (double)32);
+
+			//cuda layout (print average)
+			dim3    blocksPerGrid_av(num_tile_x, num_tile_y);
+			dim3    threadsPerBlock_av(32, 32);
+
+			gpuErrchk(cudaMalloc((void**)&d_global_av, sizeof(int4)));
+			gpuErrchk(cudaMemset(d_global_av, 0, sizeof(int4)));
+
+			// run kernel (print average)
+			cudaEventRecord(start, 0);
+			image_av_col_SOA << <blocksPerGrid_av, threadsPerBlock_av >> > (d_image_r, d_image_g, d_image_b, w, h, d_global_av);
+			gpuErrchk(cudaPeekAtLastError());
+			gpuErrchk(cudaDeviceSynchronize());
+
+			num_tile_y = (int)ceil((double)h / (double)c);
+			num_tile_x = (int)ceil((double)w / (double)c);
+
+			if (c <= 32) {
+				//cuda layout
+				dim3    blocksPerGrid(num_tile_x, num_tile_y);
+				dim3    threadsPerBlock(c, c);
+
+				// run kernel
+				cudaEventRecord(start, 0);
+				image_blur_SOA << <blocksPerGrid, threadsPerBlock >> > (d_image_r, d_image_g, d_image_b, d_image_r_out, d_image_g_out, d_image_b_out, c, w, h);
+				gpuErrchk(cudaPeekAtLastError());
+				gpuErrchk(cudaDeviceSynchronize());
+
+			}
+			else if (c > 32) {
+				printf("This program uses 1 thread block per mosaic so mosaic sizes > 1024 are not supported");
+				exit(1);
+			}
+
+			cudaEventRecord(stop, 0);
+			cudaEventSynchronize(stop);
+			cudaEventElapsedTime(&ms, start, stop);
+
+			// copy the image back from the GPU for output to file
+			gpuErrchk(cudaMemcpy(h_image_r, d_image_r_out, image_size, cudaMemcpyDeviceToHost));
+			gpuErrchk(cudaMemcpy(h_image_g, d_image_g_out, image_size, cudaMemcpyDeviceToHost));
+			gpuErrchk(cudaMemcpy(h_image_b, d_image_b_out, image_size, cudaMemcpyDeviceToHost));
+
+			for (int x = 0; x < w; x++) {
+				for (int y = 0; y < h; y++) {
+					int i = x + y * w;
+					h_image[i].x = h_image_r[i];
+					h_image[i].z = h_image_g[i];
+					h_image[i].y = h_image_b[i];
+				}
+			}
+
+			//cleanup
+			cudaEventDestroy(start);
+			cudaEventDestroy(stop);
+			cudaFree(d_image_r);
+			cudaFree(d_image_g);
+			cudaFree(d_image_b);
+
+			free(h_image_r);
+			free(h_image_g);
+			free(h_image_b);
+			cudaFree(d_global_av);
+
+		}
 
 		// output image
 		printf("Outputting file...");
 		output_image_file(h_image, imageout, w, h);
-
-		//cleanup
-		cudaEventDestroy(start);
-		cudaEventDestroy(stop);
-		cudaFree(d_image);
-		cudaFree(d_image_output);
 		free(h_image);
-		cudaFree(d_global_av);
-
 		printf("CUDA mode execution time took %.4fs\n", ((ms) / CLOCKS_PER_SEC));
 		break;
 	}
 	case (ALL): {
 		//TODO: starting timing here
 		// Checking command line inputs for user error
-		
+
 		//TODO: read input image file (either binary or plain text PPM) 
 		Image *im_in;
 		im_in = (Image *)malloc(sizeof(Image));
@@ -1007,3 +1112,43 @@ void get_file_dims(const char* filename, int* w, int* h)
 	fclose(f);
 }
 
+void input_image_file_SOA(const char* filename, int* image_r, int* image_b, int* image_g)
+{
+	FILE *f; //input file handle
+	char temp[256];
+	unsigned int s;
+	int w, h;
+	uchar4* image;
+
+	//open the input file and write header info for PPM filetype
+	f = fopen(filename, "rb");
+	if (f == NULL) {
+		fprintf(stderr, "Error opening %s input file\n", filename);
+		exit(1);
+	}
+	fscanf(f, "%s\n", &temp);
+	fscanf(f, "%d %d\n", &w, &h);
+	fscanf(f, "%d\n", &s);
+
+	image = (uchar4*)malloc(w * h * sizeof(uchar4));
+
+	for (int x = 0; x < w; x++) {
+		for (int y = 0; y < h; y++) {
+			int i = x + y * w;
+			fread(&image[i], sizeof(unsigned char), 3, f); //only read rgb
+														   //image[i].w = 255;
+		}
+	}
+
+	for (int x = 0; x < w; x++) {
+		for (int y = 0; y < h; y++) {
+			int i = x + y * w;
+			image_r[i] = image[i].x;
+			image_g[i] = image[i].y;
+			image_b[i] = image[i].z;
+		}
+	}
+
+
+	fclose(f);
+}
